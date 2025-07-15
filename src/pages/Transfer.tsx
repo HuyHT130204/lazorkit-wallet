@@ -1,7 +1,6 @@
 "use client"
 
-import type React from "react"
-import { useState } from "react"
+import React, { useState, useEffect } from "react"
 import {
   Send,
   Copy,
@@ -14,58 +13,81 @@ import {
   ArrowRight,
   Shield,
 } from "lucide-react"
+import { PublicKey } from "@solana/web3.js"
+import type { TokenInfo } from "../services/solana"
+import { fetchTokenList, buildTransferTransaction } from "../services/solana"
+import { useWallet } from "@lazorkit/wallet"
 
-interface Token {
-  id: string
-  name: string
-  symbol: string
-  amount: number
-  usdValue: number
-}
-
-interface WalletData {
-  address: string
-  tokens: Token[]
+function useLazorkit() {
+  const wallet = useWallet() as unknown
+  // Ép kiểu rõ ràng để lấy signAndSendTransaction nếu có
+  if (wallet && typeof (wallet as { signAndSendTransaction?: unknown }).signAndSendTransaction === 'function') {
+    return {
+      signAndSendTransaction: (wallet as { signAndSendTransaction: (tx: unknown) => Promise<unknown> }).signAndSendTransaction,
+    }
+  }
+  return { signAndSendTransaction: async () => { throw new Error('signAndSendTransaction not available') } }
 }
 
 interface TransferProps {
-  wallet: WalletData
-  onTransfer: (transferDetails: { recipientAddress: string; tokenId: string; amount: number }) => void
+  wallet: { address: string }
+  onTransfer?: (transferDetails: { recipientAddress: string; tokenId: string; amount: number }) => void
 }
 
-const Transfer: React.FC<TransferProps> = ({ wallet, onTransfer }) => {
+const Transfer: React.FC<TransferProps> = ({ wallet }) => {
   const [recipientAddress, setRecipientAddress] = useState("")
-  const [selectedTokenId, setSelectedTokenId] = useState(wallet.tokens[0]?.id || "")
+  const [tokens, setTokens] = useState<TokenInfo[]>([])
+  const [selectedTokenMint, setSelectedTokenMint] = useState<string>("")
   const [amount, setAmount] = useState("")
   const [isLoading, setIsLoading] = useState(false)
   const [showPreview, setShowPreview] = useState(false)
   const [showTokenDropdown, setShowTokenDropdown] = useState(false)
   const [showSuccessDialog, setShowSuccessDialog] = useState(false)
-  // Removed dialog state and related logic
+  const [error, setError] = useState<string | null>(null)
 
-  const selectedToken = wallet.tokens.find((token) => token.id === selectedTokenId)
+  const { signAndSendTransaction } = useLazorkit()
 
-  const handleTransfer = () => {
-    if (!recipientAddress.trim() || !selectedTokenId || !amount) return
-
-    setIsLoading(true)
-    setTimeout(() => {
+  useEffect(() => {
+    let ignore = false
+    const fetchTokens = async () => {
       try {
-        onTransfer({
-          recipientAddress: recipientAddress.trim(),
-          tokenId: selectedTokenId,
-          amount: Number.parseFloat(amount),
-        })
-        setShowSuccessDialog(true)
+        const toks = await fetchTokenList(wallet.address)
+        if (!ignore) {
+          setTokens(toks)
+          if (toks.length > 0) setSelectedTokenMint(toks[0].mint)
+        }
       } catch {
-        // Removed dialog status and message setting
+        if (!ignore) setTokens([])
       }
-      // Removed setDialogOpen(true)
+    }
+    if (wallet.address) fetchTokens()
+    return () => { ignore = true }
+  }, [wallet.address])
+
+  const selectedToken = tokens.find((t) => t.mint === selectedTokenMint)
+
+  const handleTransfer = async () => {
+    setError(null)
+    if (!recipientAddress.trim() || !selectedTokenMint || !amount || !selectedToken) return
+    setIsLoading(true)
+    try {
+      const tx = await buildTransferTransaction({
+        from: new PublicKey(wallet.address),
+        to: recipientAddress.trim(),
+        amount: Number.parseFloat(amount),
+        mint: selectedTokenMint,
+      })
+      await signAndSendTransaction(tx)
+      setShowSuccessDialog(true)
       setRecipientAddress("")
       setAmount("")
+    } catch (e: unknown) {
+      const errMsg = e instanceof Error ? e.message : "Transfer failed"
+      setError(errMsg)
+    } finally {
       setIsLoading(false)
       setShowPreview(false)
-    }, 1800)
+    }
   }
 
   const handlePreview = () => {
@@ -74,16 +96,17 @@ const Transfer: React.FC<TransferProps> = ({ wallet, onTransfer }) => {
     }
   }
 
-  const isValid = recipientAddress.trim() && selectedTokenId && amount && Number.parseFloat(amount) > 0
-  const hasInsufficientBalance = selectedToken && Number.parseFloat(amount) > selectedToken.amount
+  const isValid = recipientAddress.trim() && selectedTokenMint && amount && Number.parseFloat(amount) > 0
+  const hasInsufficientBalance = selectedToken && Number.parseFloat(amount) > (selectedToken.amount || 0)
 
   const formatAddress = (address: string) => {
+    if (!address) return ""
     return `${address.slice(0, 6)}...${address.slice(-4)}`
   }
 
   const setPercentage = (percentage: number) => {
     if (selectedToken) {
-      const newAmount = ((selectedToken.amount * percentage) / 100).toFixed(6)
+      const newAmount = ((selectedToken.amount * percentage) / 100).toFixed(selectedToken.decimals)
       setAmount(newAmount)
     }
   }
@@ -168,12 +191,12 @@ const Transfer: React.FC<TransferProps> = ({ wallet, onTransfer }) => {
                 {selectedToken ? (
                   <div className="flex items-center gap-3">
                     <div className="w-10 h-10 bg-gray-800 rounded-full flex items-center justify-center font-bold text-white">
-                      {selectedToken.symbol.charAt(0)}
+                      {selectedToken.mint.slice(0, 4)}
                     </div>
                     <div className="text-left">
-                      <div className="font-semibold">{selectedToken.name}</div>
+                      <div className="font-semibold">{selectedToken.mint.slice(0, 8)}</div>
                       <div className="text-sm text-gray-400">
-                        Balance: {selectedToken.amount.toFixed(4)} {selectedToken.symbol}
+                        Balance: {selectedToken.amount.toFixed(selectedToken.decimals)}
                       </div>
                     </div>
                   </div>
@@ -184,26 +207,24 @@ const Transfer: React.FC<TransferProps> = ({ wallet, onTransfer }) => {
               </button>
               {showTokenDropdown && (
                 <div className="absolute top-full left-0 right-0 mt-2 bg-gray-900 border border-gray-800 rounded-xl shadow-xl z-50 max-h-64 overflow-y-auto">
-                  {wallet.tokens.map((token) => (
+                  {tokens.map((token) => (
                     <button
-                      key={token.id}
+                      key={token.mint}
                       type="button"
                       onClick={() => {
-                        setSelectedTokenId(token.id)
+                        setSelectedTokenMint(token.mint)
                         setShowTokenDropdown(false)
                       }}
                       className="w-full p-4 hover:bg-gray-800 transition-colors flex items-center gap-3 border-b border-gray-800 last:border-b-0"
                     >
                       <div className="w-10 h-10 bg-gray-800 rounded-full flex items-center justify-center font-bold text-white">
-                        {token.symbol.charAt(0)}
+                        {token.mint.slice(0, 4)}
                       </div>
                       <div className="flex-1 text-left">
-                        <div className="font-semibold text-white">{token.name}</div>
-                        <div className="text-sm text-gray-400">{token.symbol}</div>
-                      </div>
-                      <div className="text-right">
-                        <div className="font-semibold text-white">{token.amount.toFixed(4)}</div>
-                        <div className="text-sm text-gray-400">${token.usdValue.toFixed(2)}</div>
+                        <div className="font-semibold">{token.mint.slice(0, 8)}</div>
+                        <div className="text-sm text-gray-400">
+                          Balance: {token.amount.toFixed(token.decimals)}
+                        </div>
                       </div>
                     </button>
                   ))}
@@ -227,7 +248,7 @@ const Transfer: React.FC<TransferProps> = ({ wallet, onTransfer }) => {
               />
               <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-3">
                 <span className="text-sm text-gray-400 font-medium min-w-[50px] text-left">
-                  {selectedToken?.symbol || "TOKEN"}
+                  {selectedToken ? selectedToken.mint.slice(0, 4) : "TOKEN"}
                 </span>
                 <button
                   type="button"
@@ -244,20 +265,21 @@ const Transfer: React.FC<TransferProps> = ({ wallet, onTransfer }) => {
                 <div className="flex items-center gap-2">
                   <span className="text-gray-400">Available:</span>
                   <span className="text-white font-medium">
-                    {selectedToken.amount.toFixed(4)} {selectedToken.symbol}
+                    {selectedToken.amount.toFixed(selectedToken.decimals)}
                   </span>
                 </div>
-                {amount && (
-                  <div className="text-gray-400">
-                    ≈ ${(Number.parseFloat(amount) * (selectedToken.usdValue / selectedToken.amount)).toFixed(2)}
-                  </div>
-                )}
               </div>
             )}
             {hasInsufficientBalance && (
               <div className="flex items-center gap-2 text-gray-400">
                 <AlertCircle className="w-4 h-4 text-[#9945FF]" />
                 <span>Insufficient balance</span>
+              </div>
+            )}
+            {error && (
+              <div className="flex items-center gap-2 text-red-400">
+                <AlertCircle className="w-4 h-4" />
+                <span>{error}</span>
               </div>
             )}
           </div>
@@ -354,21 +376,15 @@ const Transfer: React.FC<TransferProps> = ({ wallet, onTransfer }) => {
                   <span className="text-sm text-gray-400">Token</span>
                   <div className="flex items-center gap-2">
                     <div className="w-6 h-6 bg-gray-700 rounded-full flex items-center justify-center font-bold text-xs text-white">
-                      {selectedToken.symbol.charAt(0)}
+                      {selectedToken.mint.slice(0, 4)}
                     </div>
-                    <span className="text-white font-medium">{selectedToken.name}</span>
+                    <span className="text-white font-medium">{selectedToken.mint.slice(0, 8)}</span>
                   </div>
                 </div>
                 <div className="flex items-center justify-between">
                   <span className="text-sm text-gray-400">Amount</span>
                   <span className="text-white font-bold text-lg">
-                    {amount} {selectedToken.symbol}
-                  </span>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-sm text-gray-400">USD Value</span>
-                  <span className="text-white font-medium">
-                    ${(Number.parseFloat(amount) * (selectedToken.usdValue / selectedToken.amount)).toFixed(2)}
+                    {amount} {selectedToken.mint.slice(0, 4)}
                   </span>
                 </div>
                 <div className="flex items-center justify-between">
@@ -410,5 +426,4 @@ const Transfer: React.FC<TransferProps> = ({ wallet, onTransfer }) => {
   )
 }
 
-// Test component with mock data
 export default Transfer
