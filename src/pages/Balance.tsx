@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useCallback } from "react"
+import { useState, useEffect, useCallback, useRef } from "react"
 import {
   Copy,
   Eye,
@@ -19,6 +19,7 @@ import {
 import type { Wallet } from "../lib/types"
 import type { TokenInfo } from "../services/solana"
 import { fetchBalance, fetchTokenList, fetchTransactionHistory } from "../services/solana"
+import { Dialog, DialogContent, DialogHeader, DialogFooter, DialogTitle, DialogDescription } from "../components/ui/dialog"
 
 type TransactionHistory = {
   signature: string;
@@ -63,6 +64,11 @@ const Balance = ({ wallet }: BalanceProps) => {
   const [tokens, setTokens] = useState<TokenInfo[]>([])
   const [transactions, setTransactions] = useState<TransactionHistory[]>([])
   const [loadingTx, setLoadingTx] = useState(false)
+  const [isFaucetLoading, setIsFaucetLoading] = useState(false)
+  const [faucetCooldown, setFaucetCooldown] = useState<number>(0)
+  const [showFaucetDialog, setShowFaucetDialog] = useState(false)
+  const [faucetError, setFaucetError] = useState<string | null>(null)
+  const faucetCooldownRef = useRef<NodeJS.Timeout | null>(null)
 
   // Copy address to clipboard
   const handleCopy = () => {
@@ -178,6 +184,47 @@ const Balance = ({ wallet }: BalanceProps) => {
     return { direction, amount: Math.abs(delta), partner };
   }
 
+  // Hàm gọi airdrop
+  const requestAirdrop = async () => {
+    setIsFaucetLoading(true)
+    setFaucetError(null)
+    try {
+      const res = await fetch("https://api.devnet.solana.com", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "requestAirdrop",
+          params: [wallet.address, 2 * 1e9], // 2 SOL
+        }),
+      })
+      const data = await res.json()
+      if (data.error) throw new Error(data.error.message || "Airdrop failed")
+      // Đặt cooldown 30s
+      setFaucetCooldown(30)
+      faucetCooldownRef.current = setInterval(() => {
+        setFaucetCooldown((prev) => {
+          if (prev <= 1) {
+            clearInterval(faucetCooldownRef.current as NodeJS.Timeout)
+            return 0
+          }
+          return prev - 1
+        })
+      }, 1000)
+      // Reload balance sau 2s
+      setTimeout(() => fetchData(), 2000)
+    } catch (e: unknown) {
+      if (e instanceof Error) {
+        setFaucetError(e.message || "Airdrop failed")
+      } else {
+        setFaucetError("Airdrop failed")
+      }
+    } finally {
+      setIsFaucetLoading(false)
+    }
+  }
+
   return (
     <div className="bg-black text-white">
       <div className="max-w-6xl mx-auto p-4">
@@ -263,15 +310,22 @@ const Balance = ({ wallet }: BalanceProps) => {
 
         {/* Quick Actions */}
         <div className="grid grid-cols-4 gap-4 mb-6">
-          {/* Thay đổi nút Faucet để mở trang faucet bên ngoài */}
+          {/* Thay đổi nút Faucet để tự động airdrop */}
           <button
-            onClick={() => window.open("https://faucet.solana.com", "_blank")}
-            className="bg-gray-900 border border-gray-800 rounded-2xl p-6 flex flex-col items-center gap-3 transition-all duration-200 hover:bg-gray-800 hover:border-[#9945FF]"
+            onClick={() => {
+              if (faucetCooldown > 0) {
+                setShowFaucetDialog(true)
+              } else {
+                requestAirdrop()
+              }
+            }}
+            disabled={isFaucetLoading}
+            className={`bg-gray-900 border border-gray-800 rounded-2xl p-6 flex flex-col items-center gap-3 transition-all duration-200 hover:bg-gray-800 hover:border-[#9945FF] ${isFaucetLoading ? "opacity-60 cursor-not-allowed" : ""}`}
           >
             <div className="p-3 rounded-full bg-[#4CAF50]">
-              <ArrowDownLeft className="w-6 h-6 text-white" />
+              {isFaucetLoading ? <RefreshCw className="w-6 h-6 text-white animate-spin" /> : <ArrowDownLeft className="w-6 h-6 text-white" />}
             </div>
-            <span className="text-sm font-medium text-white">Faucet</span>
+            <span className="text-sm font-medium text-white">{faucetCooldown > 0 ? `Wait ${faucetCooldown}s` : "Faucet"}</span>
           </button>
 
           {[
@@ -450,6 +504,27 @@ const Balance = ({ wallet }: BalanceProps) => {
             )}
           </div>
         )}
+        {/* Dialog for faucet cooldown notification */}
+        <Dialog open={showFaucetDialog} onOpenChange={setShowFaucetDialog}>
+          <DialogContent className="border-[#9945FF]">
+            <DialogHeader>
+              <DialogTitle>Faucet Cooldown</DialogTitle>
+            </DialogHeader>
+            <DialogDescription>
+              You have just received an airdrop. Please wait <span className="text-[#9945FF] font-semibold">{faucetCooldown}s</span> before requesting again.<br/>
+              Solana Devnet limits the number of faucet requests in a short period to prevent spam.<br/>
+              {faucetError && <span className="text-red-400">{faucetError}</span>}
+            </DialogDescription>
+            <DialogFooter>
+              <button
+                onClick={() => setShowFaucetDialog(false)}
+                className="w-full h-12 bg-[#9945FF] hover:bg-[#7b2cbf] text-white rounded-xl font-semibold transition-all duration-200 mt-4"
+              >
+                Got it
+              </button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </div>
     </div>
   )
