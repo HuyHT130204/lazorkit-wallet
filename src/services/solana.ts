@@ -51,7 +51,7 @@ export async function fetchTokenList(publicKey: string): Promise<TokenInfo[]> {
           decimals: info.tokenAmount.decimals,
         }
       })
-      .filter((token) => token.amount > 0) // Only return tokens with balance
+      .filter((token) => token.amount > 0)
 
     return tokens
   } catch (e) {
@@ -66,9 +66,7 @@ export async function fetchTokenList(publicKey: string): Promise<TokenInfo[]> {
 export async function fetchTransactionHistory(publicKey: string, limit = 10) {
   try {
     const pubkey = new PublicKey(publicKey)
-    // Lấy danh sách chữ ký giao dịch gần nhất
     const signatures = await connection.getSignaturesForAddress(pubkey, { limit })
-    // Lấy chi tiết giao dịch cho mỗi chữ ký
     const transactions = await Promise.all(
       signatures.map(async (sig) => {
         const tx = await connection.getTransaction(sig.signature, { commitment: "confirmed" })
@@ -104,7 +102,6 @@ export async function buildTransferTransaction({ from, to, amount, mint }: Build
   const toPubkey = new PublicKey(to)
 
   if (mint === SOL_MINT) {
-    // Native SOL transfer
     transaction.add(
       SystemProgram.transfer({
         fromPubkey: from,
@@ -113,10 +110,8 @@ export async function buildTransferTransaction({ from, to, amount, mint }: Build
       }),
     )
   } else {
-    // SPL Token transfer
     const mintPubkey = new PublicKey(mint)
 
-    // Get mint info to determine decimals
     const mintInfo = await connection.getParsedAccountInfo(mintPubkey)
     let decimals = 0
     if (mintInfo.value && "data" in mintInfo.value) {
@@ -124,32 +119,26 @@ export async function buildTransferTransaction({ from, to, amount, mint }: Build
       decimals = parsed?.info?.decimals ?? 0
     }
 
-    // Get associated token accounts
     const fromTokenAccount = await getAssociatedTokenAddress(mintPubkey, from)
     const toTokenAccount = await getAssociatedTokenAddress(mintPubkey, toPubkey)
 
-    // Check if recipient's token account exists
     try {
       await getAccount(connection, toTokenAccount)
     } catch (error) {
-      // Create associated token account for recipient
       transaction.add(
         createAssociatedTokenAccountInstruction(
-          from, // payer
-          toTokenAccount, // associated token account
-          toPubkey, // owner
-          mintPubkey, // mint
+          from,
+          toTokenAccount,
+          toPubkey,
+          mintPubkey,
         ),
       )
     }
 
-    // Add transfer instruction
     const transferAmount = BigInt(Math.round(amount * Math.pow(10, decimals)))
-
     transaction.add(createTransferInstruction(fromTokenAccount, toTokenAccount, from, transferAmount))
   }
 
-  // Set recent blockhash and fee payer (IMPORTANT for LazorKit)
   const { blockhash } = await connection.getLatestBlockhash()
   transaction.recentBlockhash = blockhash
   transaction.feePayer = from
@@ -167,31 +156,10 @@ export async function requestAirdrop(publicKey: string, amount = 1): Promise<str
     const signature = await connection.requestAirdrop(pubkey, amount * LAMPORTS_PER_SOL)
     console.log("Airdrop signature:", signature)
 
-    // Wait for confirmation
     await connection.confirmTransaction(signature)
     return signature
   } catch (e) {
     console.error("Airdrop failed:", e)
     throw e
   }
-<<<<<<< Updated upstream
-  // Lấy associated token accounts
-  const fromTokenAccount = await getAssociatedTokenAddress(mintPubkey, from);
-  const toTokenAccount = await getAssociatedTokenAddress(mintPubkey, toPubkey);
-  // Build transfer instruction
-  transaction.add(
-    createTransferInstruction(
-      fromTokenAccount,
-      toTokenAccount,
-      from,
-      BigInt(Math.round(amount * Math.pow(10, decimals)))
-    )
-  );
-  return transaction;
-} 
-<<<<<<< Updated upstream
-=======
-=======
 }
->>>>>>> Stashed changes
->>>>>>> Stashed changes
