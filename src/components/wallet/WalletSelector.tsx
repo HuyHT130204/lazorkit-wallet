@@ -2,7 +2,7 @@
 
 import type React from "react"
 import { useState } from "react"
-import { ChevronDown, Wallet, Check, Copy } from 'lucide-react'
+import { ChevronDown, Wallet, Copy, Check } from "lucide-react"
 import type { Wallet as WalletType } from "../../lib/types"
 import { formatAddress } from "../../lib/utils"
 
@@ -22,115 +22,76 @@ export const WalletSelector: React.FC<WalletSelectorProps> = ({
   iconOnly = false,
 }) => {
   const [isOpen, setIsOpen] = useState(false)
-  const [copiedId, setCopiedId] = useState<string | null>(null)
+  const [copied, setCopied] = useState(false)
 
-  const handleCopy = (address: string, walletId: string) => {
+  const handleCopy = (address: string, e: React.MouseEvent) => {
+    e.stopPropagation()
     navigator.clipboard.writeText(address)
-    setCopiedId(walletId)
-    setTimeout(() => setCopiedId(null), 2000)
+    setCopied(true)
+    setTimeout(() => setCopied(false), 1200)
   }
 
   return (
     <div className="relative">
-      {iconOnly ? (
-        <button
-          onClick={() => setIsOpen(!isOpen)}
-          className="p-2 rounded-xl bg-gray-800 hover:bg-gray-700 border border-gray-700 transition-all duration-200 flex items-center justify-center"
-          aria-label="Select wallet"
-        >
-          <Wallet className="h-6 w-6 text-white" />
-        </button>
-      ) : (
-        <button
-          onClick={() => setIsOpen(!isOpen)}
-          className="flex items-center space-x-3 px-4 py-3 text-sm bg-gray-800 hover:bg-gray-700 rounded-xl transition-all duration-200 border border-gray-700 min-w-[200px]"
-        >
-          <div className="p-2 rounded-lg bg-gray-900">
-            <Wallet className="h-4 w-4 text-white" />
-          </div>
-          <div className="flex-1 text-left">
-            <div className="font-medium text-white">{selectedWallet.name}</div>
-            <div className="text-xs text-gray-400 font-mono">{formatAddress(selectedWallet.address)}</div>
-          </div>
-          <ChevronDown
-            className={`h-4 w-4 text-gray-400 transition-transform duration-200 ${isOpen ? "rotate-180" : ""}`}
-          />
-        </button>
-      )}
+      <button
+        onClick={() => setIsOpen(!isOpen)}
+        className="flex items-center gap-3 px-4 py-2 bg-gray-900 border border-gray-800 rounded-xl hover:bg-gray-800 transition-all duration-200"
+      >
+        <div className="p-2 bg-gray-800 rounded-lg">
+          <Wallet className="w-5 h-5 text-white" />
+        </div>
+        {!iconOnly && (
+          <>
+            <div className="text-left">
+              <div className="text-sm font-medium text-white">{selectedWallet.name}</div>
+              <div className="text-xs text-gray-400 font-mono">{formatAddress(selectedWallet.address)}</div>
+            </div>
+            <ChevronDown className="w-4 h-4 text-gray-400" />
+          </>
+        )}
+      </button>
 
       {isOpen && (
         <>
-          {/* Backdrop */}
           <div className="fixed inset-0 z-40" onClick={() => setIsOpen(false)} />
-          {/* Dropdown */}
           <div
-            className={`absolute top-full right-0 mt-2 w-80 max-w-xs bg-gray-900 border border-gray-800 rounded-2xl shadow-2xl z-50 overflow-hidden ${dropdownClassName}`}
-            style={{ minWidth: "240px" }}
+            className={`absolute top-full right-0 mt-2 w-80 max-w-xs bg-gray-900 border border-gray-800 rounded-2xl shadow-2xl z-50 overflow-hidden ${dropdownClassName || "left-auto"}`}
           >
-            <div className="p-2">
-              <div className="text-xs font-medium text-gray-400 px-3 py-2 border-b border-gray-800 mb-2">
-                Select Wallet
-              </div>
+            <div className="p-4 space-y-4">
+              <div className="text-sm font-medium text-gray-400 uppercase tracking-wider">Your Wallets</div>
               {wallets.map((wallet) => (
                 <div
                   key={wallet.id}
-                  className={`relative overflow-hidden rounded-xl transition-all duration-200 ${
-                    wallet.id === selectedWallet.id ? "bg-gray-800 border border-[#9945FF]" : "hover:bg-gray-800"
-                  }`}
+                  className={`p-4 rounded-xl cursor-pointer transition-all duration-200 flex items-center gap-3 shadow-md
+                    ${wallet.id === selectedWallet.id
+                      ? "bg-black border-2 border-[#9945FF] scale-105"
+                      : "bg-black border border-gray-700 hover:bg-gray-800 hover:scale-105"}
+                  `}
+                  onClick={() => {
+                    onWalletChange(wallet)
+                    setIsOpen(false)
+                  }}
                 >
-                  <button
-                    onClick={() => {
-                      onWalletChange(wallet)
-                      setIsOpen(false)
-                    }}
-                    className="w-full text-left p-4 transition-all duration-200"
-                  >
+                  <div className="p-2 bg-gray-900 rounded-lg flex items-center justify-center">
+                    <Wallet className="w-6 h-6 text-white" />
+                  </div>
+                  <div className="flex-1 min-w-0">
                     <div className="flex items-center justify-between">
-                      <div className="flex items-center space-x-3">
-                        <div
-                          className={`p-2 rounded-lg transition-all duration-200 ${
-                            wallet.id === selectedWallet.id ? "bg-[#9945FF] text-white" : "bg-gray-800 text-gray-400"
-                          }`}
-                        >
-                          <Wallet className="h-4 w-4" />
-                        </div>
-                        <div>
-                          <div
-                            className={`font-medium transition-colors duration-200 ${
-                              wallet.id === selectedWallet.id ? "text-white" : "text-white"
-                            }`}
-                          >
-                            {wallet.name}
-                          </div>
-                          <div className="text-xs text-gray-400 font-mono mt-1">{formatAddress(wallet.address)}</div>
-                        </div>
-                      </div>
-                      <div className="flex items-center space-x-2">
-                        <span
-                          role="button"
-                          tabIndex={0}
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            handleCopy(wallet.address, wallet.id)
-                          }}
-                          onKeyDown={(e) => {
-                            if (e.key === "Enter" || e.key === " ") {
-                              e.stopPropagation()
-                              handleCopy(wallet.address, wallet.id)
-                            }
-                          }}
-                          className="p-2 rounded-lg hover:bg-gray-700 hover:text-white transition-all duration-200 cursor-pointer"
-                        >
-                          {copiedId === wallet.id ? (
-                            <Check className="h-3 w-3 text-white" />
-                          ) : (
-                            <Copy className="h-3 w-3 text-gray-400" />
-                          )}
-                        </span>
-                        {wallet.id === selectedWallet.id && <div className="w-2 h-2 bg-[#9945FF] rounded-full" />}
-                      </div>
+                      <div className="text-base font-semibold text-white truncate">{wallet.name}</div>
+                      <button
+                        onClick={(e) => handleCopy(wallet.address, e)}
+                        className="p-2 hover:bg-gray-800 rounded-lg transition-colors ml-2"
+                      >
+                        {copied ? (
+                          <Check className="w-4 h-4 text-green-400" />
+                        ) : (
+                          <Copy className="w-4 h-4 text-gray-400" />
+                        )}
+                      </button>
                     </div>
-                  </button>
+                    <div className="text-xs text-white font-mono truncate">{formatAddress(wallet.address)}</div>
+                    <div className="text-sm font-bold text-white mt-1">{wallet.balance.toFixed(4)} <span className="text-xs font-medium text-white">SOL</span></div>
+                  </div>
                 </div>
               ))}
             </div>

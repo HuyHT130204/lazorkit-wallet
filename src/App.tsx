@@ -1,5 +1,4 @@
 "use client"
-
 import { useState, useEffect } from "react"
 import { BrowserRouter as Router, Routes, Route, Navigate } from "react-router-dom"
 import Login from "./pages/Login"
@@ -11,33 +10,30 @@ import Settings from "./pages/Settings"
 import type { Wallet } from "./lib/types"
 import { Buffer } from "buffer"
 import { LazorkitProvider } from "@lazorkit/wallet"
+import { useWalletConnection } from "./hooks/useWalletConnection"
+import { fetchBalance } from "./services/solana"
 
 if (typeof window !== "undefined") {
   window.Buffer = Buffer
 }
 
-const mockWallets: Wallet[] = [
-  {
-    id: "1",
-    address: "0x1234567890abcdef1234567890abcdef12345678", // This will be replaced
-    name: "Main Wallet",
-    balance: 1.25,
-    tokens: [
-      { id: "1", name: "Ethereum", symbol: "ETH", amount: 10, usdValue: 30000, decimals: 18 },
-      { id: "2", name: "Tether", symbol: "USDT", amount: 1000, usdValue: 1000, decimals: 6 },
-      { id: "3", name: "Binance Coin", symbol: "BNB", amount: 25, usdValue: 15000, decimals: 18 },
-      { id: "4", name: "Cardano", symbol: "ADA", amount: 500, usdValue: 200, decimals: 6 },
-    ],
-  },
-  // ...other mock wallets...
-]
-
 function AppContent() {
   const [isLoggedIn, setIsLoggedIn] = useState(false)
   const [isDarkMode] = useState(true)
-  const [selectedWallet, setSelectedWallet] = useState(mockWallets[0])
-  const [wallets, setWallets] = useState(mockWallets)
-  const [realWalletAddress, setRealWalletAddress] = useState<string | null>(null)
+  const [walletAddress, setWalletAddress] = useState<string>("")
+  const [walletName, setWalletName] = useState("Main Wallet")
+  const [walletBalance, setWalletBalance] = useState<number>(0)
+
+  const {
+    isConnected,
+    address,
+    error,
+    smartWalletPublicKey,
+    isReadyForTransaction,
+    signAndSendTransaction,
+    connectWallet,
+    disconnectWallet,
+  } = useWalletConnection()
 
   // Apply dark mode class to body
   useEffect(() => {
@@ -48,53 +44,71 @@ function AppContent() {
     }
   }, [isDarkMode])
 
-  const handleLogin = (walletData?: { smartWalletAddress: string; account: unknown }) => {
-    if (walletData) {
-      // Update the wallet with real address
-      setRealWalletAddress(walletData.smartWalletAddress)
-      // Update the selected wallet with real address
-      const updatedWallet = {
-        ...selectedWallet,
-        address: walletData.smartWalletAddress,
-      }
-      setSelectedWallet(updatedWallet)
-      // Update wallets array
-      setWallets((prev) =>
-        prev.map((wallet) =>
-          wallet.id === selectedWallet.id ? { ...wallet, address: walletData.smartWalletAddress } : wallet,
-        ),
-      )
-      console.log("Wallet updated with real address:", walletData.smartWalletAddress)
+  // Sync wallet address with connection state
+  useEffect(() => {
+    if (address && address !== walletAddress) {
+      setWalletAddress(address)
     }
+  }, [address, walletAddress])
+
+  // Auto-login nếu wallet đã có smartWalletPubkey và isConnected từ SDK
+  useEffect(() => {
+    if (isConnected && address && !isLoggedIn) {
+      setWalletAddress(address)
+      setIsLoggedIn(true)
+    }
+  }, [isConnected, address, isLoggedIn])
+
+  // Fetch wallet balance when walletAddress changes
+  useEffect(() => {
+    const fetchWalletBalance = async () => {
+      if (walletAddress) {
+        const bal = await fetchBalance(walletAddress)
+        setWalletBalance(bal)
+      } else {
+        setWalletBalance(0)
+      }
+    }
+    fetchWalletBalance()
+  }, [walletAddress])
+
+  const handleLogin = async (walletData: { smartWalletAddress: string; account: unknown }) => {
+    setWalletAddress(walletData.smartWalletAddress)
     setIsLoggedIn(true)
   }
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    await disconnectWallet()
     setIsLoggedIn(false)
-    setRealWalletAddress(null)
-    // Reset to mock address
-    setSelectedWallet(mockWallets[0])
-    setWallets(mockWallets)
+    setWalletAddress("")
+    setWalletName("Main Wallet")
+  }
+
+  const handleWalletConnect = async (): Promise<boolean> => {
+    return await connectWallet()
   }
 
   if (!isLoggedIn) {
     return <Login onLogin={handleLogin} />
   }
 
-  const handleWalletChange = (wallet: Wallet) => {
-    setSelectedWallet(wallet)
+  // Create wallet object for components
+  const currentWallet: Wallet = {
+    id: "1",
+    address: walletAddress,
+    name: walletName,
+    balance: walletBalance,
+    tokens: [],
+  }
+
+  const handleWalletChange = () => {
   }
 
   const handleUpdateWalletName = (name: string) => {
-    setWallets((prev) => prev.map((wallet) => (wallet.id === selectedWallet.id ? { ...wallet, name } : wallet)))
-    setSelectedWallet((prev) => ({ ...prev, name }))
+    setWalletName(name)
   }
 
-  const handleTransfer = (data: { recipientAddress: string; tokenId: string; amount: number }) => {
-    console.log("Transfer from real wallet:", {
-      from: realWalletAddress || selectedWallet.address,
-      ...data,
-    })
+  const handleTransfer = () => {
   }
 
   return (
@@ -102,17 +116,37 @@ function AppContent() {
       <Routes>
         <Route
           path="/"
-          element={<AppLayout wallets={wallets} selectedWallet={selectedWallet} onWalletChange={handleWalletChange} />}
+          element={
+            <AppLayout
+              wallets={[currentWallet]}
+              selectedWallet={currentWallet}
+              onWalletChange={handleWalletChange}
+              isWalletConnected={!!smartWalletPublicKey}
+              connectionError={error}
+            />
+          }
         >
           <Route index element={<Navigate to="/balance" replace />} />
-          <Route path="/balance" element={<Balance wallet={selectedWallet} />} />
+          <Route path="/balance" element={<Balance wallet={currentWallet} />} />
           <Route path="/devices" element={<Devices />} />
-          <Route path="/transfer" element={<Transfer wallet={selectedWallet} onTransfer={handleTransfer} />} />
+          <Route
+            path="/transfer"
+            element={
+              <Transfer
+                wallet={currentWallet}
+                onTransfer={handleTransfer}
+                onWalletConnect={handleWalletConnect}
+                smartWalletPubkey={smartWalletPublicKey}
+                signAndSendTransaction={signAndSendTransaction}
+                isReadyForTransaction={isReadyForTransaction}
+              />
+            }
+          />
           <Route
             path="/settings"
             element={
               <Settings
-                walletName={selectedWallet.name}
+                walletName={currentWallet.name}
                 onUpdateWalletName={handleUpdateWalletName}
                 onLogout={handleLogout}
               />
@@ -127,9 +161,9 @@ function AppContent() {
 function App() {
   return (
     <LazorkitProvider
-      rpcUrl={import.meta.env.VITE_LAZORKIT_RPC_URL || "https://api.devnet.solana.com"}
-      ipfsUrl={import.meta.env.VITE_LAZORKIT_PORTAL_URL || "https://portal.lazor.sh"}
-      paymasterUrl={import.meta.env.VITE_LAZORKIT_PAYMASTER_URL || "https://lazorkit-paymaster.onrender.com"}
+      rpcUrl="https://api.devnet.solana.com"
+      ipfsUrl="https://portal.lazor.sh"
+      paymasterUrl="https://lazorkit-paymaster.onrender.com"
     >
       <AppContent />
     </LazorkitProvider>
